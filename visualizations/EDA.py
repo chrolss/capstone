@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set()
-
+import joblib
 
 def ecdf(data):
     """Compute ECDF for a one-dimensional array of measurements."""
@@ -28,6 +28,8 @@ features = pd.read_csv(features_fp) # The original which we won't touch
 labels = pd.read_csv(labels_fp)     # The training labels
 df = pd.read_csv(features_fp)   # The copy which we will adjust
 df = pd.merge(left=df, right=labels, on='row_id', how='left')
+#df = joblib.load('data/interim/df.pkl')
+labels = df[['row_id', 'rate_spread']]
 
 # Basic info
 print(features.shape)   # (2000000, 20)
@@ -53,6 +55,9 @@ _ = plt.plot(rs_x, rs_y)                        # Majority seem to be close to 1
 print(np.percentile(labels.rate_spread, 57.5))    # All 1 at 57.5 percentile
 _ = plt.hist(np.log(labels.rate_spread), bins=10)
 
+# Boxplot to see how the outliers in the rate spread are behaviouring
+_ = sns.boxplot(y='rate_spread', data=labels)       # we should remove ratespread greater than 20
+
 # Property Location (here -1 is a missing value for some reason)
 df.msa_md.value_counts()            # 409 different values, but no missing values in training set
 df.msa_md.describe()                # No missing values! min = 0
@@ -60,6 +65,25 @@ df.state_code.describe()            # Missing values, max 52 (number of US state
 len(df[df['state_code'] == -1])     # 1338 missing values
 df.county_code.describe()           # No missing values in training set, 316 different counties
 
+# Effect of lender on rate spread
+tt = df[['row_id', 'lender', 'rate_spread']]
+lender_max = dict()
+lender_mean = dict()
+llenders = tt.lender.unique().tolist()
+for lender in llenders:
+    lender_max[lender] = max(tt[tt['lender'] == lender]['rate_spread'])
+    lender_mean[lender] = np.mean(tt[tt['lender'] == lender]['rate_spread'])
+
+lender, max_rate = zip(*lender_max.items())
+lender2, mean_rate = zip(*lender_mean.items())
+plt.subplot(2, 1, 1)
+_ = plt.hist(max_rate, bins=50)
+plt.title('Max rate')
+plt.subplot(2, 1, 2)
+_ = plt.hist(mean_rate, bins=50)
+plt.title('Mean rate')
+
+tt['max_spread'] = tt['rate_spread']
 
 # Feature engineering - Numerical
 df['loan_income_q'] = df['loan_amount'] / df['applicant_income']
@@ -83,15 +107,18 @@ cat_features = [feature for feature in df.columns if df[feature].dtypes == 'obje
 fig = plt.figure()
 fig.suptitle('Loan Categories')
 ax1 = fig.add_subplot(131)
-df.groupby('loan_type')['rate_spread'].value_counts(normalize=True).unstack().plot(kind='bar', stacked=True, ax=ax1, legend=False)
+df.groupby('loan_type')['rate_spread'].value_counts(normalize=True).unstack().plot(kind='bar', stacked=True, ax=ax1,
+                                                                                   legend=False)
 plt.title('Loan type')
 plt.xticks(rotation=45)
 ax2 = fig.add_subplot(132)
-df.groupby('loan_purpose')['rate_spread'].value_counts(normalize=True).unstack().plot(kind='bar', stacked=True, ax=ax2, legend=False)
+df.groupby('loan_purpose')['rate_spread'].value_counts(normalize=True).unstack().plot(kind='bar', stacked=True, ax=ax2,
+                                                                                      legend=False)
 plt.title('Loan Purpose')
 plt.xticks(rotation=45)
 ax3 = fig.add_subplot(133)
-df.groupby('lender_group')['rate_spread'].value_counts(normalize=True).unstack().plot(kind='bar', stacked=True, ax=ax3, legend=False)
+df.groupby('lender_group')['rate_spread'].value_counts(normalize=True).unstack().plot(kind='bar', stacked=True, ax=ax3,
+                                                                                      legend=False)
 plt.title('Lender Group')
 plt.xticks(rotation=45)
 handles, labs = ax1.get_legend_handles_labels()
@@ -138,4 +165,35 @@ joblib.dump(df, 'data/interim/df.pkl')
 df_missing = df[df['population'].isnull()]  # Missing values are pretty much in the same rows, so probably one
 df_missing.county_code.value_counts()       # Majority belong to county code 316
 
+# Check the effect of state
+tt = df[['row_id', 'state_code', 'rate_spread']]
+# Remove outliers from the training dataset
+tt = tt[tt.rate_spread < 17]
+state_max = dict()
+state_mean = dict()
+states = tt.state_code.unique().tolist()
+for state in states:
+    state_max[state] = max(tt[tt['state_code'] == state]['rate_spread'])
+    state_mean[state] = np.mean(tt[tt['state_code'] == state]['rate_spread'])
+
+state_code, max_rate = zip(*state_max.items())
+state_code2, mean_rate = zip(*state_mean.items())
+
+plt.subplot(2, 1, 1)
+plt.title('Max Rate')
+_ = plt.bar(state_code, max_rate)
+plt.subplot(2, 1, 2)
+plt.title('Mean Rate')
+_ = plt.bar(state_code2, mean_rate)
+
+# Compare training and test dataset
+test = pd.read_csv('data/raw/test_values.csv')
+train = pd.read_csv('data/raw/train_values.csv')
+
+print(len(test.lender.unique()))        # 3900
+print(len(train.lender.unique()))       # 3893
+i = 0
+for lender in train.lender.unique():
+    if lender in test.lender.unique():
+        i += 1                          # Will output 3500, meaning there are
 

@@ -3,8 +3,7 @@ import joblib
 import numpy as np
 
 # Load the slightly preprocessed data
-df = pd.read_csv('data/raw/train_values.csv')
-labels = pd.read_csv('data/raw/train_labels.csv')
+df = pd.read_csv('data/raw/test_values.csv')
 
 # Map categoricals
 df['loan_type'] = df.loan_type.map({1: 'Conventional', 2: 'FHA-insured', 3: 'VA-guaranteed', 4: 'FSA/RHS'})
@@ -35,44 +34,30 @@ df['applicant_sex'] = df.applicant_sex.map({
     5: 'Not applicable'
 })
 
-lenders = df.lender.value_counts().to_dict()
-lender_group = dict()
-for lender in lenders.keys():
-    temp = lenders[lender]
-    if temp > 1000:
-        lender_group[lender] = 'large'
-    elif temp > 500:
-        lender_group[lender] = 'medium'
-    elif temp > 20:
+lender_group = joblib.load('data/models/lender_group.pkl')
+for lender in df['lender']:
+    if lender not in lender_group.keys():
         lender_group[lender] = 'small'
-    else:
-        lender_group[lender] = 'tiny'
-
 
 df['lender_group'] = df.lender.apply(lambda x: lender_group[x])
-joblib.dump(lender_group, 'data/models/lender_group.pkl')
+
 # Statistics on the lenders
-tt = pd.merge(df, labels, on='row_id')
-lender_max = dict()
-lender_mean = dict()
-llenders = df.lender.unique().tolist()
-for lender in llenders:
-    lender_max[lender] = max(tt[tt['lender'] == lender]['rate_spread'])
-    lender_mean[lender] = np.mean(tt[tt['lender'] == lender]['rate_spread'])
+lender_max = joblib.load('data/models/lender_max.pkl')
+_, lmax = zip(*lender_max.items())
+lmax_mean = np.mean(lmax)
+for lender in df['lender']:
+    if lender not in lender_max:
+        lender_max[lender] = lmax_mean
 
-df['lender_mean'] = df.lender.apply(lambda x: lender_mean[x])
 df['lender_max'] = df.lender.apply(lambda x: lender_max[x])
-joblib.dump(lender_mean, 'data/models/lender_mean.pkl')
-joblib.dump(lender_max, 'data/models/lender_max.pkl')
 
-# Fill missing values
-df.isnull().sum()   # Applicant income is the greatest missing value, eather median fill or model for it?
-# population 1% missing
-# minority_population_pct           1% missing
-# ffiecmedian_family_income         1% missing
-# tract_to_msa_md_income_pct        1% missing
-# number_of_owner-occupied_units    10% missing
-# number_of_1_to_4_family_units     10% missing
+lender_mean = joblib.load('data/models/lender_mean.pkl')
+_, lmean = zip(*lender_mean.items())
+lmean_mean = np.mean(lmean)
+for lender in df['lender']:
+    if lender not in lender_mean:
+        lender_mean[lender] = lmean_mean
+df['lender_mean'] = df.lender.apply(lambda x: lender_mean[x])
 
 # Income - fill with median
 df.applicant_income = df.applicant_income.fillna(df.applicant_income.median())
@@ -82,6 +67,26 @@ df['tract_to_msa_md_income_pct'] = df.tract_to_msa_md_income_pct.fillna(df.tract
 # For state code, we will simply ad a missing state
 df.state_code.describe()            # Missing values, max 52 (number of US states, duh)
 df['state_code'] = df.state_code.apply(lambda x: 53 if x == -1 else x)
+
+# Statistics on the states
+state_max = joblib.load('data/models/state_max.pkl')
+_, smax = zip(*state_max.items())
+smax_mean = np.mean(smax)
+for state in df['state_code']:
+    if state not in state_max:
+        state_max[state] = smax_mean
+
+df['state_max'] = df.state_code.apply(lambda x: state_max[x])
+
+state_mean = joblib.load('data/models/state_mean.pkl')
+_, smean = zip(*state_mean.items())
+smean_mean = np.mean(smean)
+for state in df['state_code']:
+    if state not in state_mean:
+        state_mean[state] = smean_mean
+
+df['state_mean'] = df.state_code.apply(lambda x: state_mean[x])
+
 
 # Create loan income q
 df['loan_income_q'] = df['applicant_income'] / df['loan_amount']
@@ -117,20 +122,10 @@ for cat in cat_features:
     df = pd.concat([df, pd.get_dummies(df[cat], cat, drop_first=True)], axis=1)
     df = df.drop(cat, axis=1)
 
-df['state_code'] = df.state_code.astype('category')
-df = pd.concat([df, pd.get_dummies(df.state_code, 'state')], axis=1)
-
 # Perform logs on large values
 df['ffiecmedian_log'] = df['ffiecmedian_family_income'].apply(lambda x: np.log(x))
 df['number_of_1_to_4_family_units_log'] = df['number_of_1_to_4_family_units'].apply(lambda x: np.log(x))
 df['population_log'] = df['population'].apply(lambda x: np.log(x))
-
-# Remove outliers from the training dataset
-df = pd.merge(left=df, right=labels, on='row_id', how='left')
-df = df[df.rate_spread < 17]
-
-# Save the big dataframe
-joblib.dump(df, 'data/processed/training_data_pca.pkl')
 
 # Drop unnecessary values
 df = df.drop('applicant_income', axis=1)    # We have the log of this instead
@@ -144,17 +139,6 @@ df = df.drop('population', axis=1)
 df = df.drop('state_code', axis=1)
 df = df.drop('lender', axis=1)              # Drop lender since we grouped them already
 
-joblib.dump(df, 'data/processed/training_data.pkl')
-
-# Appendix
-tt = pd.merge(left=df, right=labels, on='row_id', how='left')
-import matplotlib.pyplot as plt
-import seaborn as sns
-corr = tt.corr()
-mask = np.zeros_like(corr, dtype=np.bool)
-mask[np.triu_indices_from(mask)] = True
-f, ax = plt.subplots(figsize=(11, 9))
-cmap = sns.diverging_palette(220, 10, as_cmap=True)
-sns.heatmap(corr, mask=mask, cmap=cmap, vmax=.3, center=0, square=True, linewidths=.5, cbar_kws={"shrink": .5})
+joblib.dump(df, 'data/processed/test_data_state.pkl')
 
 
