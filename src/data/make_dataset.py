@@ -6,6 +6,9 @@ import numpy as np
 df = pd.read_csv('data/raw/train_values.csv')
 labels = pd.read_csv('data/raw/train_labels.csv')
 
+def make_dataset():
+    print("hejsan")
+
 # Map categoricals
 df['loan_type'] = df.loan_type.map({1: 'Conventional', 2: 'FHA-insured', 3: 'VA-guaranteed', 4: 'FSA/RHS'})
 df['property_type'] = df.property_type.map({1: 'One to four-family', 2: 'Manufactured housing', 3: 'Multifamily'})
